@@ -11,21 +11,25 @@ wait() {
 
 Resume(mcUuid) {
 	isStateValidForResume()
-	if idfState == INIT {
+	if mcState == INIT {
 		err = doMulticlusterPrismElementInitialization()
 		if err {
 			idfState = PE_ERROR
 			return
 		}
-		validateStateIsPeDone
-	}
-	if idfState == PE_DONE {
+		validateContainerExists()
 		err = doMulticlusterEndpointManagerInitialization()
 		if err {
 			idfState = ERROR
 			return
 		}
 		idfState = COMPLETE
+	}
+	if mcState == DELETING {
+		err = DoMulticlusterPrismElementDeletion()
+		if err {
+			idfState = DELETE_ERROR
+		}
 	}
 }
 
@@ -69,19 +73,32 @@ DoMulticlusterEndpointManagerDelete() {}
 DeleteMulticluster() {
 	isStateValid()
 	isMcPrimary()
-	if mcState == {PE_ERROR, DELETING} {
-		!backendExists()
-		err = DoMulticlusterPrismElementDeletion
+	if mcState == DELETING {
+		return
+	}
+	if mcState == COMPLETE {
+		allOtherMcInComplete()
+		allMcHealthy()
+	}
+	// If backend exists, delete it.
+	if mcState == COMPLETE || (mcState == ERROR && backendExists) {
+		err = DoMulticlusterEndpointManagerDelete
 		if err {
-			idfState = DELETE_ERROR
+			return err
 		}
 		return
 	}
-	// remaining states == {COMPLETE, ERROR, DELETE_ERROR}
-	allOtherMcStatesComplete()
-	DoMulticlusterEndpointManagerDelete()
-	if !McEntityExistsInBackend {
-		DoMulticlusterEndpointManagerDelete()
+	// Backend doesn't exists so start manageability workflow.
+	if mcState == {PE_ERROR, DELETE_ERROR, ERROR} {
+		!backendExists()
+		idfState = COMPLETE
+		go deployer.Start(uuid)
+		// Or if we want synchronous, we can instead do: 
+		// err = DoMulticlusterPrismElementDeletion()
+		// if err {
+		// 	   idfState = DELETE_ERROR
+		// }
+		return
 	}
 }
 
@@ -96,7 +113,11 @@ maybeDeleteMulticluster() {
 
 startMulticlusterDeleteWatch() {
 	every 10 min {
-		maybeDeleteMulticluster()
+		for all mc {
+			if mc state == DELETING {
+				go deployer.Start(uuid)
+			}
+		}
 	}
 }
 
